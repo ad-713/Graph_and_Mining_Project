@@ -19,10 +19,16 @@ pip install -r requirements.txt
 
 ### Database Setup
 
-Run the Neo4j container:
+To run Graph Data Science (GDS) algorithms, you must use the Neo4j Enterprise image and install the GDS plugin. Run the following command in PowerShell (Windows):
 
-```bash
-docker run -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/password neo4j:latest
+```powershell
+docker run `
+  --name neo4j-gds `
+  -p 7474:7474 -p 7687:7687 `
+  -e NEO4J_AUTH=neo4j/password `
+  -e NEO4J_PLUGINS='[\"graph-data-science\"]' `
+  -e NEO4J_ACCEPT_LICENSE_AGREEMENT=eval `
+  neo4j:5-enterprise
 ```
 
 ### Data Import
@@ -32,6 +38,16 @@ Ensure the CSV files are located in the `data/` directory. Then run the import s
 ```bash
 python "Adventure works/import_neo4j.py"
 ```
+
+### Graph Data Science (GDS) Analysis
+
+Once the data is imported and the GDS plugin is active, you can run the analysis script:
+
+```bash
+python "Adventure works/gds_analysis.py"
+```
+
+The results and discussion are available in the [GDS_REPORT.md](GDS_REPORT.md) file.
 
 ## Dataset Description
 
