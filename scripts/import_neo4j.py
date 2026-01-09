@@ -59,9 +59,17 @@ class Neo4jImporter:
                     MERGE (p:Product {productKey: $key})
                     SET p.name = $name,
                         p.standardCost = $cost,
-                        p.color = $color,
-                        p.subcategory = $subcat,
-                        p.category = $cat
+                        p.color = $color
+                    
+                    // Entity Resolution: Product Models
+                    MERGE (m:ProductModel {name: $name})
+                    MERGE (p)-[:BELONGS_TO_MODEL]->(m)
+
+                    // Hierarchy Integration: Categories & Subcategories
+                    MERGE (c:Category {name: $cat})
+                    MERGE (sc:Subcategory {name: $subcat})
+                    MERGE (sc)-[:IN_CATEGORY]->(c)
+                    MERGE (p)-[:IN_SUBCATEGORY]->(sc)
                 """, key=int(row['ProductKey']), name=row['Product'], 
                     cost=row['Standard Cost'], color=row['Color'], 
                     subcat=row['Subcategory'], cat=row['Category'])
@@ -74,10 +82,11 @@ class Neo4jImporter:
                 session.run("""
                     MERGE (res:Reseller {resellerKey: $key})
                     SET res.name = $name,
-                        res.businessType = $type,
-                        res.city = $city,
-                        res.state = $state,
-                        res.country = $country
+                        res.businessType = $type
+                    
+                    // Geographic Co-occurrence: City nodes
+                    MERGE (c:City {name: $city, state: $state, country: $country})
+                    MERGE (res)-[:LOCATED_IN]->(c)
                 """, key=int(row['ResellerKey']), name=row['Reseller'], 
                     type=row['Business Type'], city=row['City'], 
                     state=row['State-Province'], country=row['Country-Region'])
@@ -108,12 +117,14 @@ class Neo4jImporter:
             """)
 
     def create_product_monopartite(self):
-        # Products commonly sold by the same reseller
+        # Products commonly sold by the same reseller (Weighted)
         with self.driver.session() as session:
             session.run("""
                 MATCH (p1:Product)<-[:SOLD_PRODUCT]-(res:Reseller)-[:SOLD_PRODUCT]->(p2:Product)
                 WHERE id(p1) < id(p2)
-                MERGE (p1)-[:COMMONLY_SOLD_BY_SAME_RESELLER]->(p2)
+                WITH p1, p2, count(res) as strength
+                MERGE (p1)-[r:COMMONLY_SOLD_BY_SAME_RESELLER]->(p2)
+                SET r.weight = strength
             """)
 
 if __name__ == "__main__":

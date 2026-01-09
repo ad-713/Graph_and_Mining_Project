@@ -19,6 +19,7 @@ class GDSAnalysis:
         # Drop existing projections if they exist
         self.gds.run_cypher("CALL gds.graph.drop('salesperson-graph', false)")
         self.gds.run_cypher("CALL gds.graph.drop('product-graph', false)")
+        self.gds.run_cypher("CALL gds.graph.drop('knowledge-graph', false)")
 
         # Salesperson projection
         self.gds.graph.project(
@@ -27,18 +28,31 @@ class GDSAnalysis:
             "WORKS_WITH"
         )
 
-        # Product projection
+        # Product projection (Weighted)
         self.gds.graph.project(
             "product-graph",
-            "Product",
-            "COMMONLY_SOLD_BY_SAME_RESELLER"
+            ["Product", "ProductModel"],
+            {
+                "COMMONLY_SOLD_BY_SAME_RESELLER": {"orientation": "UNDIRECTED", "properties": "weight"},
+                "BELONGS_TO_MODEL": {"orientation": "UNDIRECTED", "properties": {"weight": {"defaultValue": 1.0}}}
+            }
+        )
+
+        # Knowledge Graph projection (Hierarchical)
+        self.gds.graph.project(
+            "knowledge-graph",
+            ["Product", "Subcategory", "Category", "Reseller", "City"],
+            {
+                "IN_SUBCATEGORY": {"orientation": "UNDIRECTED"},
+                "IN_CATEGORY": {"orientation": "UNDIRECTED"},
+                "SOLD_PRODUCT": {"orientation": "UNDIRECTED"},
+                "LOCATED_IN": {"orientation": "UNDIRECTED"}
+            }
         )
 
     def run_path_finding(self):
         print("\n--- Path Finding ---")
         # 1. Salesperson: Shortest Path
-        # We'll pick two random salespersons or search for specific ones if known
-        # Let's find two salespersons and find the path between them
         res = self.gds.run_cypher("""
             MATCH (s1:Salesperson), (s2:Salesperson)
             WHERE s1.name <> s2.name
@@ -56,12 +70,13 @@ class GDSAnalysis:
         print("Salesperson Shortest Path:")
         print(res)
 
-        # 2. Product: Shortest Path
+        # 2. Product: Shortest Path (using Knowledge Graph for better connectivity)
+        print("Product Shortest Path (via Knowledge Graph):")
         res = self.gds.run_cypher("""
             MATCH (p1:Product), (p2:Product)
             WHERE p1.name <> p2.name
             WITH p1, p2 LIMIT 1
-            CALL gds.shortestPath.dijkstra.stream('product-graph', {
+            CALL gds.shortestPath.dijkstra.stream('knowledge-graph', {
                 sourceNode: p1,
                 targetNode: p2
             })
@@ -69,9 +84,8 @@ class GDSAnalysis:
             RETURN gds.util.asNode(sourceNode).name AS source,
                    gds.util.asNode(targetNode).name AS target,
                    totalCost,
-                   [nodeId IN nodeIds | gds.util.asNode(nodeId).name] AS nodes
+                   [nodeId IN nodeIds | COALESCE(gds.util.asNode(nodeId).name, labels(gds.util.asNode(nodeId))[0])] AS nodes
         """)
-        print("Product Shortest Path:")
         print(res)
 
     def run_communities(self):
@@ -86,21 +100,21 @@ class GDSAnalysis:
         print("Salesperson Communities (Louvain):")
         print(res)
 
-        # 2. Product: Louvain
+        # 2. Product: Louvain (Weighted)
         res = self.gds.run_cypher("""
-            CALL gds.louvain.stream('product-graph')
+            CALL gds.louvain.stream('product-graph', {
+                relationshipWeightProperty: 'weight'
+            })
             YIELD nodeId, communityId
             RETURN gds.util.asNode(nodeId).name AS name, communityId
             ORDER BY communityId ASC LIMIT 10
         """)
-        print("Product Communities (Louvain):")
+        print("Product Communities (Louvain, Weighted):")
         print(res)
 
     def run_centralities(self):
         print("\n--- Centrality Measures ---")
-        # 1. Salesperson: Betweenness
-        # Note: Betweenness is expensive, using a small sample or PageRank if preferred
-        # Let's use PageRank for both for consistency or Degree
+        # 1. Salesperson: PageRank
         res = self.gds.run_cypher("""
             CALL gds.pageRank.stream('salesperson-graph')
             YIELD nodeId, score
@@ -110,14 +124,16 @@ class GDSAnalysis:
         print("Salesperson Top Centrality (PageRank):")
         print(res)
 
-        # 2. Product: PageRank
+        # 2. Product: PageRank (Weighted)
         res = self.gds.run_cypher("""
-            CALL gds.pageRank.stream('product-graph')
+            CALL gds.pageRank.stream('product-graph', {
+                relationshipWeightProperty: 'weight'
+            })
             YIELD nodeId, score
             RETURN gds.util.asNode(nodeId).name AS name, score
             ORDER BY score DESC LIMIT 5
         """)
-        print("Product Top Centrality (PageRank):")
+        print("Product Top Centrality (PageRank, Weighted):")
         print(res)
 
     def run_link_prediction(self):

@@ -1,63 +1,182 @@
-# Rapport d'Analyse des requêtes Graph Data Science (GDS) - Adventure Works
+# Graph Data Science (GDS) Analysis Report - Adventure Works
 
-Ce rapport présente les résultats des analyses GDS effectuées sur les deux modèles de graphes projetés : le réseau des commerciaux (**Salesperson Network**) et le réseau des produits (**Product Network**).
-
----
-
-## 1. Recherche de Chemin (Path Finding)
-**Algorithme utilisé :** Dijkstra Shortest Path (unweighted)
-
-### Salesperson Network
-*   **Objectif :** Trouver le chemin le plus court entre deux commerciaux basés sur leurs collaborations (travail dans la même région).
-*   **Résultat :** Le chemin identifié montre comment deux employés sont connectés à travers une chaîne de collègues partageant des territoires.
-*   **Discussion :** Dans un contexte d'entreprise, cela permet d'identifier des intermédiaires clés pour le partage de connaissances entre des régions éloignées. Si le chemin est court (poids 1), ils travaillent directement ensemble. S'il est plus long, ils partagent des connaissances via des pivots.
-
-### Product Network
-*   **Objectif :** Trouver la distance entre deux produits basés sur leur vente par les mêmes revendeurs.
-*   **Résultat :** Identifie si deux produits sont souvent vendus ensemble par une chaîne de revendeurs.
-*   **Discussion :** Une distance courte indique une forte corrélation de marché. Si deux produits n'ont aucun chemin, cela signifie qu'ils appartiennent à des segments de revendeurs totalement disjoints (ex: vélos haut de gamme vs accessoires basiques).
+This report details the findings from graph algorithms applied to the **Salesperson Network** (`WORKS_WITH`) and the **Product Network** (`COMMONLY_SOLD_BY_SAME_RESELLER`).
 
 ---
 
-## 2. Détection de Communautés (Communities)
-**Algorithme utilisé :** Louvain
+## 1. Path Finding (Shortest Path)
+**Algorithm:** Dijkstra Shortest Path (unweighted)
 
 ### Salesperson Network
-*   **Objectif :** Grouper les commerciaux en équipes naturelles.
-*   **Résultat :** L'algorithme a identifié des clusters qui correspondent généralement aux groupes géographiques (Group/Country).
-*   **Discussion :** Cela valide la structure organisationnelle. Des communautés mélangeant plusieurs régions pourraient indiquer des commerciaux "pivots" ou des régions très interconnectées économiquement (ex: Europe Centrale).
+*   **Query:**
+    ```cypher
+    MATCH (s1:Salesperson), (s2:Salesperson)
+    WHERE s1.name <> s2.name
+    WITH s1, s2 LIMIT 1
+    CALL gds.shortestPath.dijkstra.stream('salesperson-graph', {
+        sourceNode: s1,
+        targetNode: s2
+    })
+    YIELD index, sourceNode, targetNode, totalCost, nodeIds, costs, path
+    RETURN gds.util.asNode(sourceNode).name AS source,
+           gds.util.asNode(targetNode).name AS target,
+           totalCost,
+           [nodeId IN nodeIds | gds.util.asNode(nodeId).name] AS nodes
+    ```
+*   **Result:**
+    | source | target | totalCost | nodes |
+    | :--- | :--- | :--- | :--- |
+    | Stephen Jiang | Brian Welcker | 1.0 | [Stephen Jiang, Brian Welcker] |
+*   **Analysis:** This indicates that these individuals are immediate collaborators. In the Adventure Works organization, they likely share the same territory or report to the same manager, facilitating direct knowledge transfer.
 
 ### Product Network
-*   **Objectif :** Identifier des "paniers" de produits ou des catégories de marché.
-*   **Résultat :** Formation de groupes de produits fréquemment vendus ensemble par les mêmes revendeurs.
-*   **Discussion :** On observe souvent que les produits d'une même `Subcategory` ou `Category` se retrouvent dans la même communauté, ce qui démontre la spécialisation des revendeurs Adventure Works.
+*   **Query:**
+    ```cypher
+    MATCH (p1:Product), (p2:Product)
+    WHERE p1.name <> p2.name
+    WITH p1, p2 LIMIT 1
+    CALL gds.shortestPath.dijkstra.stream('product-graph', {
+        sourceNode: p1,
+        targetNode: p2
+    })
+    YIELD index, sourceNode, targetNode, totalCost, nodeIds, costs, path
+    RETURN gds.util.asNode(sourceNode).name AS source,
+           gds.util.asNode(targetNode).name AS target,
+           totalCost,
+           [nodeId IN nodeIds | gds.util.asNode(nodeId).name] AS nodes
+    ```
+*   **Result:** Empty DataFrame (No path found).
+*   **Analysis:** The product graph appears to be fragmented into disconnected components. This suggests that resellers are highly specialized; a reseller stocking one specific type of product (e.g., high-end frames) rarely stocks products from unrelated segments, resulting in isolated islands in the graph.
 
 ---
 
-## 3. Mesures de Centralité (Centralities)
-**Algorithme utilisé :** PageRank
+## 2. Community Detection
+**Algorithm:** Louvain
 
 ### Salesperson Network
-*   **Objectif :** Identifier les commerciaux les plus "influents" ou connectés.
-*   **Résultat :** Les scores PageRank les plus élevés reviennent aux commerciaux travaillant dans les régions les plus peuplées ou partageant le plus de territoires.
-*   **Discussion :** Ces individus sont les nœuds critiques du réseau de communication interne. Leur départ pourrait fragiliser la circulation de l'information entre les équipes régionales.
+*   **Query:**
+    ```cypher
+    CALL gds.louvain.stream('salesperson-graph')
+    YIELD nodeId, communityId
+    RETURN gds.util.asNode(nodeId).name AS name, communityId
+    ORDER BY communityId ASC LIMIT 10
+    ```
+*   **Result (Top 10):**
+    | name | communityId |
+    | :--- | :--- |
+    | Jae Pak | 16 |
+    | Amy Alberts | 16 |
+    | Ranjit Varkey Chudukatil | 16 |
+    | Rachel Valdez | 16 |
+    | Garrett Vargas | 17 |
+    | Tsvi Reiter | 17 |
+    | Michael Blythe | 17 |
+    | José Saraiva | 17 |
+    | Jillian Carson | 17 |
+    | Shu Ito | 17 |
+*   **Analysis:** These clusters represent natural "work silos" or regional teams. The high modularity (e.g., Communities 16 and 17) confirms that the sales force is organized into tight-knit groups with limited cross-group collaboration.
 
 ### Product Network
-*   **Objectif :** Déterminer les produits "piliers" du catalogue.
-*   **Résultat :** Les produits avec le PageRank le plus élevé sont ceux qui sont vendus par le plus grand nombre de revendeurs diversifiés.
-*   **Discussion :** Ce sont les produits d'appel (souvent les modèles de vélos les plus populaires). Ils servent de ponts entre différents types de revendeurs.
+*   **Query:**
+    ```cypher
+    CALL gds.louvain.stream('product-graph')
+    YIELD nodeId, communityId
+    RETURN gds.util.asNode(nodeId).name AS name, communityId
+    ORDER BY communityId ASC LIMIT 10
+    ```
+*   **Result (Top 10):**
+    | name | communityId |
+    | :--- | :--- |
+    | LL Road Frame - Black, 48 | 3 |
+    | LL Road Frame - Black, 48 | 4 |
+    | LL Road Frame - Black, 48 | 5 |
+    | HL Mountain Frame - Black, 46 | 14 |
+    | HL Mountain Frame - Black, 46 | 15 |
+    | HL Mountain Frame - Black, 46 | 16 |
+    | LL Road Front Wheel | 58 |
+    | Touring Front Wheel | 61 |
+    | Touring Rear Wheel | 68 |
+    | HL Road Frame - Black, 62 | 72 |
+*   **Observation:** **Data Quality Issue Detected.** The same product name appears in multiple community IDs.
+*   **Analysis:** This indicates duplicate nodes in the database. While the algorithm correctly clusters products by category (Frames vs. Wheels), the duplicates skew the modularity score.
 
 ---
 
-## 4. Prédiction de Liens (Link Prediction / Similarity)
-**Algorithme utilisé :** Node Similarity (Jaccard)
+## 3. Centrality Measures
+**Algorithm:** PageRank
 
 ### Salesperson Network
-*   **Objectif :** Prédire quels commerciaux pourraient collaborer à l'avenir.
-*   **Résultat :** Identifie des paires de commerciaux qui ne travaillent pas encore ensemble mais qui ont un voisinage (collègues) très similaire.
-*   **Discussion :** C'est un outil puissant pour les RH pour suggérer des transferts ou des partages de bonnes pratiques entre des personnes ayant des profils de territoire similaires.
+*   **Query:**
+    ```cypher
+    CALL gds.pageRank.stream('salesperson-graph')
+    YIELD nodeId, score
+    RETURN gds.util.asNode(nodeId).name AS name, score
+    ORDER BY score DESC LIMIT 5
+    ```
+*   **Top Results:**
+    | name | score |
+    | :--- | :--- |
+    | Tete Mensa-Annan | 0.436459 |
+    | Ranjit Varkey Chudukatil | 0.376506 |
+    | José Saraiva | 0.314825 |
+    | Shu Ito | 0.297801 |
+    | Lynn Tsoflias | 0.293381 |
+*   **Analysis:** **Tete Mensa-Annan** acts as the most critical hub in the collaboration network. This individual is likely a senior manager or a "super-collaborator" vital for organization-wide communication.
 
 ### Product Network
-*   **Objectif :** Recommander des associations de produits.
-*   **Résultat :** Détecte des produits qui sont vendus par des profils de revendeurs quasi identiques.
-*   **Discussion :** C'est la base d'un système de recommandation "Next Best Offer". Si un revendeur vend le produit A mais pas le produit B (très similaire), il y a une opportunité de vente croisée (cross-selling).
+*   **Query:**
+    ```cypher
+    CALL gds.pageRank.stream('product-graph')
+    YIELD nodeId, score
+    RETURN gds.util.asNode(nodeId).name AS name, score
+    ORDER BY score DESC LIMIT 5
+    ```
+*   **Top Results:**
+    | name | score |
+    | :--- | :--- |
+    | LL Road Frame - Black, 60 | 17.976824 |
+    | Sport-100 Helmet, Black | 10.642367 |
+    | LL Road Frame - Black, 60 | 9.717205 |
+    | LL Road Frame - Black, 58 | 7.607086 |
+    | Sport-100 Helmet, Black | 6.869807 |
+*   **Analysis:** **LL Road Frame - Black, 60** is the "central pillar" of the inventory ecosystem. It is the most universally stocked item across the reseller network.
+
+---
+
+## 4. Link Prediction / Similarity
+**Algorithm:** Node Similarity (Jaccard)
+
+### Salesperson Network
+*   **Query:**
+    ```cypher
+    CALL gds.nodeSimilarity.stream('salesperson-graph')
+    YIELD node1, node2, similarity
+    RETURN gds.util.asNode(node1).name AS person1, 
+           gds.util.asNode(node2).name AS person2, 
+           similarity
+    ORDER BY similarity DESC LIMIT 5
+    ```
+*   **Top Results:**
+    | person1 | person2 | similarity |
+    | :--- | :--- | :--- |
+    | Brian Welcker | Stephen Jiang | 0.588235 |
+    | Stephen Jiang | Brian Welcker | 0.588235 |
+    | David Campbell | Pamela Ansman-Wolfe | 0.333333 |
+*   **Analysis:** Brian Welcker and Stephen Jiang share nearly 60% of their professional connections, confirming they are deeply embedded in the same local network.
+
+### Product Network
+*   **Query:**
+    ```cypher
+    CALL gds.nodeSimilarity.stream('product-graph')
+    YIELD node1, node2, similarity
+    RETURN gds.util.asNode(node1).name AS product1, 
+           gds.util.asNode(node2).name AS product2, 
+           similarity
+    ORDER BY similarity DESC LIMIT 5
+    ```
+*   **Top Results:**
+    | product1 | product2 | similarity |
+    | :--- | :--- | :--- |
+    | Men's Sports Shorts, S | Men's Sports Shorts, M | 0.995413 |
+    | Men's Sports Shorts, M | Men's Sports Shorts, S | 0.995413 |
+*   **Analysis:** This validates the "Size-Run" stocking pattern. Resellers almost always carry all size variations of a product line.
