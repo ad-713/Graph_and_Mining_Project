@@ -55,6 +55,10 @@ class Neo4jImporter:
         df = pd.read_csv(csv_path, sep="\t")
         with self.driver.session() as session:
             for _, row in df.iterrows():
+                full_name = str(row['Product'])
+                # Improved Entity Resolution heuristic: extract model name
+                model_name = full_name.split(',')[0].split(' - ')[0].strip()
+
                 session.run("""
                     MERGE (p:Product {productKey: $key})
                     SET p.name = $name,
@@ -62,7 +66,7 @@ class Neo4jImporter:
                         p.color = $color
                     
                     // Entity Resolution: Product Models
-                    MERGE (m:ProductModel {name: $name})
+                    MERGE (m:ProductModel {name: $modelName})
                     MERGE (p)-[:BELONGS_TO_MODEL]->(m)
 
                     // Hierarchy Integration: Categories & Subcategories
@@ -70,9 +74,10 @@ class Neo4jImporter:
                     MERGE (sc:Subcategory {name: $subcat})
                     MERGE (sc)-[:IN_CATEGORY]->(c)
                     MERGE (p)-[:IN_SUBCATEGORY]->(sc)
-                """, key=int(row['ProductKey']), name=row['Product'], 
+                """, key=int(row['ProductKey']), name=full_name, 
                     cost=row['Standard Cost'], color=row['Color'], 
-                    subcat=row['Subcategory'], cat=row['Category'])
+                    subcat=row['Subcategory'], cat=row['Category'],
+                    modelName=model_name)
 
     def import_resellers(self, csv_path):
         print(f"Reading {csv_path}")

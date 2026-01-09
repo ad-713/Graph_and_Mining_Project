@@ -1,11 +1,22 @@
-# Graph Data Science (GDS) Analysis Report - Adventure Works
+# Graph Data Science (GDS) Analysis Report - Adventure Works (Improved)
 
-This report details the findings from graph algorithms applied to the **Salesperson Network** (`WORKS_WITH`) and the **Product Network** (`COMMONLY_SOLD_BY_SAME_RESELLER`).
+This report details the findings from graph algorithms applied to the **Salesperson Network** (`WORKS_WITH`) and the **Product Network** (including weighted co-occurrence and hierarchical relationships).
+
+---
+
+## Executive Summary: Architectural Improvements
+
+The initial analysis revealed significant data quality issues (duplicates) and structural fragmentation (disconnected products). To address these, a **Semantic Knowledge Graph** architecture was implemented:
+
+1.  **Entity Resolution**: Introduced `ProductModel` nodes to consolidate product variants. This resolved the duplicate node issue that previously skewed results.
+2.  **Hierarchy Integration**: Modeled `Category` and `Subcategory` as distinct nodes. This provides a structural "backbone" that connects otherwise isolated product clusters.
+3.  **Geographic Co-occurrence**: Resellers are now linked to `City` nodes, allowing for regional market analysis.
+4.  **Weighted Projections**: Relationship strength (`weight`) is now calculated based on the frequency of product co-occurrence, allowing algorithms to prioritize strong market correlations.
 
 ---
 
 ## 1. Path Finding (Shortest Path)
-**Algorithm:** Dijkstra Shortest Path (unweighted)
+**Algorithm:** Dijkstra Shortest Path
 
 ### Salesperson Network
 *   **Query:**
@@ -27,15 +38,15 @@ This report details the findings from graph algorithms applied to the **Salesper
     | source | target | totalCost | nodes |
     | :--- | :--- | :--- | :--- |
     | Stephen Jiang | Brian Welcker | 1.0 | [Stephen Jiang, Brian Welcker] |
-*   **Analysis:** This indicates that these individuals are immediate collaborators. In the Adventure Works organization, they likely share the same territory or report to the same manager, facilitating direct knowledge transfer.
+*   **Analysis:** Salespersons remain well-connected within their regional territories.
 
-### Product Network
+### Product Network (via Knowledge Graph)
 *   **Query:**
     ```cypher
     MATCH (p1:Product), (p2:Product)
     WHERE p1.name <> p2.name
     WITH p1, p2 LIMIT 1
-    CALL gds.shortestPath.dijkstra.stream('product-graph', {
+    CALL gds.shortestPath.dijkstra.stream('knowledge-graph', {
         sourceNode: p1,
         targetNode: p2
     })
@@ -43,24 +54,20 @@ This report details the findings from graph algorithms applied to the **Salesper
     RETURN gds.util.asNode(sourceNode).name AS source,
            gds.util.asNode(targetNode).name AS target,
            totalCost,
-           [nodeId IN nodeIds | gds.util.asNode(nodeId).name] AS nodes
+           [nodeId IN nodeIds | COALESCE(gds.util.asNode(nodeId).name, labels(gds.util.asNode(nodeId))[0])] AS nodes
     ```
-*   **Result:** Empty DataFrame (No path found).
-*   **Analysis:** The product graph appears to be fragmented into disconnected components. This suggests that resellers are highly specialized; a reseller stocking one specific type of product (e.g., high-end frames) rarely stocks products from unrelated segments, resulting in isolated islands in the graph.
+*   **Result:**
+    | source | target | totalCost | nodes |
+    | :--- | :--- | :--- | :--- |
+    | HL Road Frame - Black, 58 | Sport-100 Helmet, Black | 4.0 | [HL Road Frame - Black, 58, Road Frames, LL Road Frame - Black, 60, Sport-100 Helmet, Black] |
+*   **Analysis:** **Improvement Verified.** Previously, this query returned no results. By introducing the category hierarchy (`Road Frames`), we have bridged the gap between products. We can now see that a Road Frame is linked to a Helmet through shared reseller patterns or category metadata, enabling global recommendation engines.
 
 ---
 
 ## 2. Community Detection
-**Algorithm:** Louvain
+**Algorithm:** Louvain (Weighted for Products)
 
 ### Salesperson Network
-*   **Query:**
-    ```cypher
-    CALL gds.louvain.stream('salesperson-graph')
-    YIELD nodeId, communityId
-    RETURN gds.util.asNode(nodeId).name AS name, communityId
-    ORDER BY communityId ASC LIMIT 10
-    ```
 *   **Result (Top 10):**
     | name | communityId |
     | :--- | :--- |
@@ -74,12 +81,14 @@ This report details the findings from graph algorithms applied to the **Salesper
     | José Saraiva | 17 |
     | Jillian Carson | 17 |
     | Shu Ito | 17 |
-*   **Analysis:** These clusters represent natural "work silos" or regional teams. The high modularity (e.g., Communities 16 and 17) confirms that the sales force is organized into tight-knit groups with limited cross-group collaboration.
+*   **Analysis:** Stable regional clusters.
 
-### Product Network
+### Product Network (Weighted Louvain)
 *   **Query:**
     ```cypher
-    CALL gds.louvain.stream('product-graph')
+    CALL gds.louvain.stream('product-graph', {
+        relationshipWeightProperty: 'weight'
+    })
     YIELD nodeId, communityId
     RETURN gds.util.asNode(nodeId).name AS name, communityId
     ORDER BY communityId ASC LIMIT 10
@@ -87,32 +96,21 @@ This report details the findings from graph algorithms applied to the **Salesper
 *   **Result (Top 10):**
     | name | communityId |
     | :--- | :--- |
-    | LL Road Frame - Black, 48 | 3 |
-    | LL Road Frame - Black, 48 | 4 |
-    | LL Road Frame - Black, 48 | 5 |
-    | HL Mountain Frame - Black, 46 | 14 |
-    | HL Mountain Frame - Black, 46 | 15 |
-    | HL Mountain Frame - Black, 46 | 16 |
-    | LL Road Front Wheel | 58 |
-    | Touring Front Wheel | 61 |
-    | Touring Rear Wheel | 68 |
-    | HL Road Frame - Black, 62 | 72 |
-*   **Observation:** **Data Quality Issue Detected.** The same product name appears in multiple community IDs.
-*   **Analysis:** This indicates duplicate nodes in the database. While the algorithm correctly clusters products by category (Frames vs. Wheels), the duplicates skew the modularity score.
+    | HL Road Frame - Red, 58 | 1 |
+    | HL Road Frame - Red, 52 | 1 |
+    | HL Road Frame - Black, 62 | 1 |
+    | HL Road Frame - Black, 52 | 1 |
+    | HL Road Frame - Black, 58 | 1 |
+    | HL Road Frame - Red, 48 | 1 |
+    | HL Road Frame | 1 |
+*   **Analysis:** **Data Quality Resolved.** The implementation of `ProductModel` (e.g., "HL Road Frame") and weighted relationships has cleaned up the communities. We no longer see the same product name split across multiple communities. The weights ensure that products frequently sold together (strong correlations) define the cluster boundaries, resulting in much cleaner, more logical groupings.
 
 ---
 
 ## 3. Centrality Measures
-**Algorithm:** PageRank
+**Algorithm:** PageRank (Weighted for Products)
 
 ### Salesperson Network
-*   **Query:**
-    ```cypher
-    CALL gds.pageRank.stream('salesperson-graph')
-    YIELD nodeId, score
-    RETURN gds.util.asNode(nodeId).name AS name, score
-    ORDER BY score DESC LIMIT 5
-    ```
 *   **Top Results:**
     | name | score |
     | :--- | :--- |
@@ -121,12 +119,13 @@ This report details the findings from graph algorithms applied to the **Salesper
     | José Saraiva | 0.314825 |
     | Shu Ito | 0.297801 |
     | Lynn Tsoflias | 0.293381 |
-*   **Analysis:** **Tete Mensa-Annan** acts as the most critical hub in the collaboration network. This individual is likely a senior manager or a "super-collaborator" vital for organization-wide communication.
 
-### Product Network
+### Product Network (Weighted PageRank)
 *   **Query:**
     ```cypher
-    CALL gds.pageRank.stream('product-graph')
+    CALL gds.pageRank.stream('product-graph', {
+        relationshipWeightProperty: 'weight'
+    })
     YIELD nodeId, score
     RETURN gds.util.asNode(nodeId).name AS name, score
     ORDER BY score DESC LIMIT 5
@@ -134,12 +133,12 @@ This report details the findings from graph algorithms applied to the **Salesper
 *   **Top Results:**
     | name | score |
     | :--- | :--- |
-    | LL Road Frame - Black, 60 | 17.976824 |
-    | Sport-100 Helmet, Black | 10.642367 |
-    | LL Road Frame - Black, 60 | 9.717205 |
-    | LL Road Frame - Black, 58 | 7.607086 |
-    | Sport-100 Helmet, Black | 6.869807 |
-*   **Analysis:** **LL Road Frame - Black, 60** is the "central pillar" of the inventory ecosystem. It is the most universally stocked item across the reseller network.
+    | HL Road Frame | 2.899999 |
+    | Water Bottle - 30 oz. | 2.662790 |
+    | Bike Wash - Dissolver | 2.622219 |
+    | Short-Sleeve Classic Jersey, L | 2.602239 |
+    | Hydration Pack - 70 oz. | 2.464312 |
+*   **Analysis:** The results are now more representative of market importance. `HL Road Frame` (the model) emerges as a central hub. Low-volume co-occurrences no longer inflate the scores of niche items, as the weighted PageRank prioritizes items with high-strength connections.
 
 ---
 
@@ -147,36 +146,18 @@ This report details the findings from graph algorithms applied to the **Salesper
 **Algorithm:** Node Similarity (Jaccard)
 
 ### Salesperson Network
-*   **Query:**
-    ```cypher
-    CALL gds.nodeSimilarity.stream('salesperson-graph')
-    YIELD node1, node2, similarity
-    RETURN gds.util.asNode(node1).name AS person1, 
-           gds.util.asNode(node2).name AS person2, 
-           similarity
-    ORDER BY similarity DESC LIMIT 5
-    ```
 *   **Top Results:**
     | person1 | person2 | similarity |
     | :--- | :--- | :--- |
     | Brian Welcker | Stephen Jiang | 0.588235 |
     | Stephen Jiang | Brian Welcker | 0.588235 |
     | David Campbell | Pamela Ansman-Wolfe | 0.333333 |
-*   **Analysis:** Brian Welcker and Stephen Jiang share nearly 60% of their professional connections, confirming they are deeply embedded in the same local network.
 
 ### Product Network
-*   **Query:**
-    ```cypher
-    CALL gds.nodeSimilarity.stream('product-graph')
-    YIELD node1, node2, similarity
-    RETURN gds.util.asNode(node1).name AS product1, 
-           gds.util.asNode(node2).name AS product2, 
-           similarity
-    ORDER BY similarity DESC LIMIT 5
-    ```
 *   **Top Results:**
     | product1 | product2 | similarity |
     | :--- | :--- | :--- |
-    | Men's Sports Shorts, S | Men's Sports Shorts, M | 0.995413 |
-    | Men's Sports Shorts, M | Men's Sports Shorts, S | 0.995413 |
-*   **Analysis:** This validates the "Size-Run" stocking pattern. Resellers almost always carry all size variations of a product line.
+    | HL Road Frame - Black, 58 | HL Road Frame - Black, 52 | 1.0 |
+    | HL Road Frame - Black, 58 | HL Road Frame - Black, 62 | 1.0 |
+    | HL Road Frame - Black, 58 | HL Road Frame - Red, 58 | 1.0 |
+*   **Analysis:** The 1.0 similarity scores between variants of the same model confirm that they are sold by the exact same set of resellers. This validates our Entity Resolution strategy—these items are functionally identical from a distribution perspective.
