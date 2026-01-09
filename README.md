@@ -36,7 +36,7 @@ docker run `
 Ensure the CSV files are located in the `data/` directory. Then run the import script:
 
 ```bash
-python "Adventure works/import_neo4j.py"
+python "scripts/import_neo4j.py"
 ```
 
 ### Graph Data Science (GDS) Analysis
@@ -44,7 +44,7 @@ python "Adventure works/import_neo4j.py"
 Once the data is imported and the GDS plugin is active, you can run the analysis script:
 
 ```bash
-python "Adventure works/gds_analysis.py"
+python "scripts/gds_analysis.py"
 ```
 
 The results and discussion are available in the [GDS_REPORT.md](GDS_REPORT.md) file.
