@@ -1,6 +1,6 @@
-# Graph_and_Mining_Project
+# Graph_and_Mining_Project: Adventure Works Semantic Knowledge Graph
 
-This project aims to analyze the **Adventure Works** dataset using graph theory and Neo4j. It involves importing relational data into a graph database and creating bipartite and monopartite representations for further analysis.
+This project analyzes the **Adventure Works** dataset using graph theory and Neo4j. It implements a **Semantic Knowledge Graph** capable of advanced Graph Data Science (GDS) analysis, including recommendation paths and weighted market analysis.
 
 ## Setup
 
@@ -33,7 +33,7 @@ docker run `
 
 ### Data Import
 
-Ensure the CSV files are located in the `data/` directory. Then run the import script:
+Ensure the CSV files are located in the `data/` directory. The import script includes **Entity Resolution** and **Schema Enrichment** logic.
 
 ```bash
 python "scripts/import_neo4j.py"
@@ -41,38 +41,40 @@ python "scripts/import_neo4j.py"
 
 ### Graph Data Science (GDS) Analysis
 
-Once the data is imported and the GDS plugin is active, you can run the analysis script:
+The analysis script leverages weighted projections and multi-node knowledge graphs:
 
 ```bash
 python "scripts/gds_analysis.py"
 ```
 
-The results and discussion are available in the [GDS_REPORT.md](GDS_REPORT.md) file.
+Detailed results and architectural justifications are available in the [GDS_REPORT.md](GDS_REPORT.md).
 
-## Dataset Description
+## Dataset & Knowledge Graph Schema
 
-The project uses a subset of the **Adventure Works** dataset, a classic relational database representing a global manufacturing company. The imported data includes:
+The project uses a subset of the **Adventure Works** dataset. The graph schema has been enhanced for higher connectivity and data quality:
 
-- **Salespersons**: Information about employees in the sales department.
+- **Salespersons**: Nodes representing sales employees.
 - **Regions**: Sales territories and geographic groups.
-- **Products**: Catalog items sold by the company, including categories and costs.
-- **Resellers**: Business partners (e.g., Value Added Resellers, Specialty Shops) that purchase products.
+- **Products & Models**: Individual SKUs are linked to **ProductModel** nodes to resolve duplicates and group variants.
+- **Categories**: Full hierarchy modeled via **Category** and **Subcategory** nodes.
+- **Resellers & Cities**: Resellers are linked to **City** nodes for geographic co-occurrence analysis.
 
 ## Graph Implementation
 
-The project implements several graph structures to reveal hidden patterns in the data:
-
-### 1. Bipartite Graphs
-Two primary bipartite relationships are established during the import:
-- **(Salesperson)-[:ASSIGNED_TO]->(Region)**: Connects two different sets of nodes, allowing us to see which employees cover which territories.
-- **(Reseller)-[:SOLD_PRODUCT]->(Product)**: Links business partners to the specific items they purchase, forming a transactional network.
+### 1. Bipartite & Semantic Relationships
+- **(Salesperson)-[:ASSIGNED_TO]->(Region)**: Territorial coverage.
+- **(Reseller)-[:SOLD_PRODUCT]->(Product)**: Transactional link.
+- **(Product)-[:BELONGS_TO_MODEL]->(ProductModel)**: Entity Resolution.
+- **(Product)-[:IN_SUBCATEGORY]->(Subcategory)-[:IN_CATEGORY]->(Category)**: Hierarchical backbone.
+- **(Reseller)-[:LOCATED_IN]->(City)**: Geographic linkage.
 
 ### 2. Monopartite Graphs (Projections)
-From the bipartite structures, we project monopartite graphs to focus on relationships within a single set of nodes:
+The project utilizes projected graphs for GDS algorithms:
 
 - **Salesperson Network**:
-    - **Relationship**: `(s1:Salesperson)-[:WORKS_WITH]->(s2:Salesperson)`
-    - **Logic**: Two salespersons are connected if they are assigned to the same sales region.
-- **Product Network**:
+    - **Relationship**: `(s1:Salesperson)-[:WORKS_WITH]->(s2:Salesperson)` (Co-region).
+- **Product Network (Weighted)**:
     - **Relationship**: `(p1:Product)-[:COMMONLY_SOLD_BY_SAME_RESELLER]->(p2:Product)`
-    - **Logic**: Two products are connected if they have been sold to the same reseller, suggesting a market basket relationship.
+    - **Logic**: Weighted by the number of resellers stocking both products. This "strength" property allows for more accurate community detection and centrality scoring.
+- **Knowledge Graph (Enriched Pathfinding)**:
+    - A multi-node projection that combines Products, Models, Categories, and Cities to allow for cross-domain path discovery (e.g., finding connections between unrelated products via shared categories or regional trends).
