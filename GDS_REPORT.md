@@ -1,4 +1,4 @@
-# Graph Data Science (GDS) Analysis Report - Adventure Works (Improved)
+# Graph Data Science (GDS) Analysis Report - Adventure Works
 
 This report details the findings from graph algorithms applied to the **Salesperson Network** (`WORKS_WITH`) and the **Product Network** (including weighted co-occurrence and hierarchical relationships).
 
